@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus-HydroLink | 決策支援儀表板</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation/dist/chartjs-plugin-annotation.min.js"></script>
+    
+    <!-- Leaflet Map Library -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #f0f4f8;
+        }
+        .main-grid {
+            grid-template-columns: 3fr 5fr;
+        }
+        .kpi-card {
+            background-color: white;
+            border-radius: 0.75rem;
+            padding: 1rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+        .tab-button {
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem 0.375rem 0 0;
+            background-color: #dbeafe;
+            color: #1e40af;
+            font-weight: 600;
+            border: 1px solid transparent;
+            border-bottom: none;
+        }
+        .tab-button.active {
+            background-color: white;
+            border-color: #bfdbfe;
+            color: #1d4ed8;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        #timeline-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #007bff;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+        #timeline-slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: #007bff;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+        .leaflet-popup-content-wrapper {
+            border-radius: 0.5rem;
+        }
+        .leaflet-popup-content {
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body class="text-gray-800">
+
+    <header class="bg-[#0044cc] text-white shadow-lg">
+        <div class="max-w-screen-xl mx-auto p-4 flex justify-between items-center">
+            <h1 class="text-2xl font-bold">Nexus-HydroLink 決策支援儀表板</h1>
+            <div class="text-right">
+                <p id="current-time" class="text-lg">2025-07-15 07:22</p>
+                <p class="text-sm text-[#99ccff]">桃園市大溪區</p>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-screen-xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-5 gap-4">
+        <!-- Left Panel: Controls & KPIs -->
+        <div class="lg:col-span-2 space-y-4">
+            <!-- Scenario Control -->
+            <div class="bg-white p-4 rounded-lg shadow-md">
+                <h2 class="text-xl font-bold text-[#0044cc] mb-3 border-b pb-2">情境模擬控制中心</h2>
+                <div class="space-y-3">
+                    <div>
+                        <label for="scenario-name" class="block text-sm font-medium text-gray-700">情境名稱</label>
+                        <input type="text" id="scenario-name" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm" placeholder="例如：颱風A-漸進式洩洪">
+                    </div>
+                    <div>
+                        <label for="simulation-duration" class="block text-sm font-medium text-gray-700">模擬時長 (小時)</label>
+                        <select id="simulation-duration" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                            <option>6</option>
+                            <option selected>12</option>
+                            <option>24</option>
+                        </select>
+                    </div>
+                    <div>
+                        <p class="block text-sm font-medium text-gray-700 mb-1">水庫放水排程</p>
+                        <div id="schedule-table" class="text-sm">
+                            <!-- Schedule rows will be added here by JS -->
+                        </div>
+                    </div>
+                    <button id="start-simulation" class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-300 shadow-lg">
+                        開始模擬
+                    </button>
+                </div>
+            </div>
+            
+            <!-- KPIs -->
+            <div id="kpi-dashboard" class="bg-white p-4 rounded-lg shadow-md hidden">
+                <h2 class="text-xl font-bold text-[#0044cc] mb-3 border-b pb-2">即時衝擊總覽</h2>
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="kpi-card text-center">
+                        <p class="text-sm text-gray-500">最大洪峰抵達時間</p>
+                        <p id="kpi-peak-time" class="text-2xl font-bold text-blue-600">T + 5.2 hr</p>
+                    </div>
+                    <div class="kpi-card text-center">
+                        <p class="text-sm text-gray-500">大溪市區最高水位</p>
+                        <p id="kpi-max-level" class="text-2xl font-bold text-red-600">8.5 m</p>
+                    </div>
+                    <div class="kpi-card text-center">
+                        <p class="text-sm text-gray-500">武嶺橋沖刷風險</p>
+                        <p id="kpi-bridge-risk" class="text-2xl font-bold text-yellow-500">中度風險</p>
+                    </div>
+                    <div class="kpi-card text-center">
+                        <p class="text-sm text-gray-500">鳶山堰取水口濁度</p>
+                        <p id="kpi-intake-risk" class="text-2xl font-bold text-green-600">安全</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Panel: Visualizations -->
+        <div id="visualization-panel" class="lg:col-span-3 bg-white p-4 rounded-lg shadow-md hidden">
+            <!-- Tabs -->
+            <div class="border-b border-gray-200">
+                <nav id="tab-nav" class="-mb-px flex space-x-2" aria-label="Tabs">
+                    <button class="tab-button active" data-tab="map">動態水情地圖</button>
+                    <button class="tab-button" data-tab="hydrograph">關鍵斷面歷線</button>
+                    <button class="tab-button" data-tab="scour">橋墩沖刷分析</button>
+                </nav>
+            </div>
+
+            <div class="mt-4">
+                <!-- Map Tab -->
+                <div id="tab-map" class="tab-content active">
+                    <div id="map" class="w-full h-[400px] rounded-lg border border-gray-300"></div>
+                </div>
+                <!-- Hydrograph Tab -->
+                <div id="tab-hydrograph" class="tab-content">
+                    <div class="h-[400px]">
+                        <canvas id="hydrographChart"></canvas>
+                    </div>
+                </div>
+                <!-- Scour Tab -->
+                <div id="tab-scour" class="tab-content">
+                     <div class="h-[400px]">
+                        <canvas id="scourChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Timeline Slider -->
+            <div class="mt-4 pt-4 border-t">
+                <label for="timeline-slider" class="block text-sm font-medium text-gray-700">時間軸控制: <span id="timeline-label" class="font-bold text-blue-600">T + 0.0 小時</span></label>
+                <input id="timeline-slider" type="range" min="0" max="12" step="0.1" value="0" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+            </div>
+        </div>
+    </main>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            // --- UI Elements ---
+            const startButton = document.getElementById('start-simulation');
+            const kpiDashboard = document.getElementById('kpi-dashboard');
+            const visualizationPanel = document.getElementById('visualization-panel');
+            const timelineSlider = document.getElementById('timeline-slider');
+            const timelineLabel = document.getElementById('timeline-label');
+            const tabNav = document.getElementById('tab-nav');
+            const tabContents = document.querySelectorAll('.tab-content');
+            const scheduleTable = document.getElementById('schedule-table');
+            const durationSelect = document.getElementById('simulation-duration');
+
+            // --- Map & Chart instances ---
+            let map, hydrographChart, scourChart, riverPath, waveMarker;
+
+            // --- Geo Data ---
+            const locations = [
+                { id: 'reservoir', name: '石門水庫', lat: 24.815, lng: 121.245 },
+                { id: 'bridgeB', name: '武嶺橋', lat: 24.880, lng: 121.285 },
+                { id: 'townA', name: '大溪市區', lat: 24.883, lng: 121.288 },
+                { id: 'intakeC', name: '鳶山堰', lat: 24.930, lng: 121.320 },
+            ];
+            const riverPathCoords = [
+                [24.815, 121.245], // 石門水庫
+                [24.830, 121.258],
+                [24.850, 121.270],
+                [24.870, 121.280],
+                [24.880, 121.285], // 武嶺橋
+                [24.895, 121.295],
+                [24.910, 121.305],
+                [24.930, 121.320]  // 鳶山堰
+            ];
+            let simulationData = {};
+
+            // --- Initial Setup ---
+            function initialize() {
+                initializeMap();
+                updateScheduleTable();
+                durationSelect.addEventListener('change', updateScheduleTable);
+                startButton.addEventListener('click', runSimulation);
+                tabNav.addEventListener('click', handleTabClick);
+                timelineSlider.addEventListener('input', updateVisuals);
+            }
+            
+            function initializeMap() {
+                map = L.map('map').setView([24.88, 121.28], 12);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                }).addTo(map);
+
+                // Draw river path and markers
+                riverPath = L.polyline(riverPathCoords, {color: 'blue', weight: 3, opacity: 0.8}).addTo(map);
+                
+                locations.forEach(loc => {
+                    L.marker([loc.lat, loc.lng]).addTo(map)
+                        .bindPopup(loc.name);
+                });
+                
+                // Create wave marker
+                const waveIcon = L.divIcon({
+                    className: 'wave-icon',
+                    html: '<div style="background-color: rgba(255, 99, 132, 0.8); width: 20px; height: 20px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px #000;"></div>',
+                    iconSize: [20, 20],
+                    iconAnchor: [10, 10]
+                });
+                waveMarker = L.marker(riverPathCoords[0], {icon: waveIcon}).addTo(map);
+            }
+
+            function updateScheduleTable() {
+                const duration = parseInt(durationSelect.value);
+                scheduleTable.innerHTML = `<div class="grid grid-cols-3 gap-2 font-semibold text-center mb-1">
+                                <span>時間 (小時後)</span>
+                                <span>放流量 (cms)</span>
+                                <span>排砂濃度 (ppm)</span>
+                            </div>`;
+                for (let i = 1; i <= duration; i++) {
+                    const row = document.createElement('div');
+                    row.className = 'grid grid-cols-3 gap-2 items-center';
+                    row.innerHTML = `
+                        <p class="text-center">${i}</p>
+                        <input type="number" value="${100 + i*50}" class="w-full border-gray-300 rounded-md shadow-sm text-sm p-1">
+                        <input type="number" value="${50 + i*20}" class="w-full border-gray-300 rounded-md shadow-sm text-sm p-1">
+                    `;
+                    scheduleTable.appendChild(row);
+                }
+                timelineSlider.max = duration;
+            }
+
+            function runSimulation() {
+                startButton.disabled = true;
+                startButton.innerHTML = '模擬中... (約需15秒，此為演示)';
+                startButton.classList.add('bg-gray-500', 'cursor-not-allowed');
+
+                setTimeout(() => {
+                    generateMockData();
+                    kpiDashboard.classList.remove('hidden');
+                    visualizationPanel.classList.remove('hidden');
+                    
+                    setTimeout(() => map.invalidateSize(), 100);
+
+                    createHydrographChart();
+                    createScourChart();
+                    updateVisuals();
+
+                    startButton.disabled = false;
+                    startButton.innerHTML = '重新模擬';
+                    startButton.classList.remove('bg-gray-500', 'cursor-not-allowed');
+                }, 2000);
+            }
+            
+            function generateMockData() {
+                const duration = parseInt(durationSelect.value);
+                const timeLabels = Array.from({ length: duration * 10 + 1 }, (_, i) => i * 0.1);
+                const baseTime = new Date();
+
+                let totalDistance = 0;
+                for (let i = 0; i < riverPathCoords.length - 1; i++) {
+                    totalDistance += L.latLng(riverPathCoords[i]).distanceTo(L.latLng(riverPathCoords[i+1]));
+                }
+
+                simulationData = {
+                    duration: duration,
+                    timeLabels: timeLabels,
+                    hydrograph: {
+                        labels: timeLabels.map(t => new Date(baseTime.getTime() + t * 3600 * 1000)),
+                        datasets: [
+                            {
+                                label: '大溪市區水位 (m)',
+                                data: timeLabels.map(t => 2 + 6.5 * Math.exp(-Math.pow(t - 5.2, 2) / 8)),
+                                borderColor: '#ff6384',
+                                tension: 0.4,
+                                pointRadius: 0,
+                            },
+                            {
+                                label: '鳶山堰水位 (m)',
+                                data: timeLabels.map(t => 1.5 + 5 * Math.exp(-Math.pow(t - 6.5, 2) / 10)),
+                                borderColor: '#36a2eb',
+                                tension: 0.4,
+                                pointRadius: 0,
+                            }
+                        ]
+                    },
+                    scour: {
+                        labels: ['武嶺橋-橋墩1', '武嶺橋-橋墩2', '武嶺橋-橋墩3'],
+                        data: [2.1, 3.5, 1.8]
+                    },
+                    totalPathDistance: totalDistance, // in meters
+                    waveTravelTime: 6 // hours to travel the whole path
+                };
+            }
+
+            function updateVisuals() {
+                const currentTime = parseFloat(timelineSlider.value);
+                timelineLabel.textContent = `T + ${currentTime.toFixed(1)} 小時`;
+
+                if (!simulationData.totalPathDistance) return;
+
+                const travelFraction = currentTime / simulationData.waveTravelTime;
+                const waveDistance = travelFraction * simulationData.totalPathDistance;
+                const waveLatLng = getLatLngAtDistance(waveDistance);
+                
+                if (waveLatLng) {
+                    waveMarker.setLatLng(waveLatLng);
+                }
+
+                if (hydrographChart) {
+                    updateChartAnnotation(hydrographChart, currentTime);
+                }
+            }
+            
+            function getLatLngAtDistance(meters) {
+                const latLngs = riverPath.getLatLngs();
+                let cumulativeDistance = 0;
+
+                if (meters <= 0) return latLngs[0];
+
+                for (let i = 0; i < latLngs.length - 1; i++) {
+                    const from = latLngs[i];
+                    const to = latLngs[i+1];
+                    const segmentDistance = from.distanceTo(to);
+
+                    if (cumulativeDistance + segmentDistance >= meters) {
+                        const distanceIntoSegment = meters - cumulativeDistance;
+                        const ratio = distanceIntoSegment / segmentDistance;
+                        return L.latLng(
+                            from.lat + (to.lat - from.lat) * ratio,
+                            from.lng + (to.lng - from.lng) * ratio
+                        );
+                    }
+                    cumulativeDistance += segmentDistance;
+                }
+                return latLngs[latLngs.length - 1];
+            }
+
+            function updateChartAnnotation(chart, time) {
+                const baseTime = chart.config.data.labels[0].getTime();
+                const targetTime = baseTime + time * 3600 * 1000;
+                chart.options.plugins.annotation.annotations.line1.xMin = targetTime;
+                chart.options.plugins.annotation.annotations.line1.xMax = targetTime;
+                chart.update('none');
+            }
+
+            function handleTabClick(e) {
+                if (e.target.classList.contains('tab-button')) {
+                    document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                    e.target.classList.add('active');
+                    
+                    tabContents.forEach(content => content.classList.remove('active'));
+                    const activeTab = document.getElementById(`tab-${e.target.dataset.tab}`);
+                    activeTab.classList.add('active');
+                    
+                    if (e.target.dataset.tab === 'map') {
+                        setTimeout(() => map.invalidateSize(), 100);
+                    }
+                }
+            }
+
+            const tooltipTitleCallback = (tooltipItems) => {
+                const item = tooltipItems[0];
+                let label = item.chart.data.labels[item.dataIndex];
+                return Array.isArray(label) ? label.join(' ') : label;
+            };
+            
+            function createHydrographChart() {
+                const ctx = document.getElementById('hydrographChart').getContext('2d');
+                if (hydrographChart) hydrographChart.destroy();
+                hydrographChart = new Chart(ctx, {
+                    type: 'line',
+                    data: simulationData.hydrograph,
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                type: 'time',
+                                time: { unit: 'hour', tooltipFormat: 'HH:mm', displayFormats: { hour: 'HH:mm' } },
+                                title: { display: true, text: '時間' }
+                            },
+                            y: { beginAtZero: true, title: { display: true, text: '水位 (m)' } }
+                        },
+                        plugins: {
+                            tooltip: { callbacks: { title: tooltipTitleCallback } },
+                            legend: { position: 'bottom' },
+                            annotation: {
+                                annotations: {
+                                    line1: {
+                                        type: 'line',
+                                        scaleID: 'x',
+                                        borderColor: 'rgba(0, 123, 255, 0.8)',
+                                        borderWidth: 2,
+                                        label: { enabled: true, content: '目前時間', position: 'start' }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            function createScourChart() {
+                const ctx = document.getElementById('scourChart').getContext('2d');
+                if (scourChart) scourChart.destroy();
+                scourChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: simulationData.scour.labels,
+                        datasets: [{
+                            label: '預測最大沖刷深度 (m)',
+                            data: simulationData.scour.data,
+                            backgroundColor: ['#ffcd56', '#ff6384', '#36a2eb']
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        indexAxis: 'y',
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { callbacks: { title: tooltipTitleCallback } },
+                            title: { display: true, text: '武嶺橋各橋墩沖刷風險分析' }
+                        },
+                         scales: { x: { title: { display: true, text: '沖刷深度 (m)' } } }
+                    }
+                });
+            }
+            
+            function updateClock() {
+                const now = new Date();
+                document.getElementById('current-time').textContent = now.toLocaleString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).replace(/\//g, '-');
+            }
+            setInterval(updateClock, 1000);
+            updateClock();
+
+            initialize();
+        });
+    </script>
+
+</body>
+</html>
